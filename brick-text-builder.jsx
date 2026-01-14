@@ -665,14 +665,6 @@ function BrickTextBuilder() {
       directionalLight.shadow.camera.bottom = -50;
       scene.add(directionalLight);
 
-      // Ground
-      const groundGeo = new THREE.PlaneGeometry(200, 200);
-      const groundMat = new THREE.MeshStandardMaterial({ color: '#3d3d5c', roughness: 0.9 });
-      const ground = new THREE.Mesh(groundGeo, groundMat);
-      ground.rotation.x = -Math.PI / 2;
-      ground.position.y = -PLATE_HEIGHT / 2 - 0.01;
-      ground.receiveShadow = true;
-      scene.add(ground);
 
       sceneRef.current = { scene, camera, renderer, THREE };
 
