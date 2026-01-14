@@ -613,6 +613,15 @@ function BrickTextBuilder() {
   const bricksRef = useRef([]);
   const baseplateRef = useRef(null);
   const buildIntervalRef = useRef(null);
+  const minifigRef = useRef(null);
+  const minifigStateRef = useRef({
+    phase: 'idle', // 'idle', 'walking', 'turning', 'waving'
+    targetX: 0,
+    startX: 0,
+    walkStartTime: 0,
+    turnStartTime: 0,
+    waveStartTime: 0
+  });
 
   const [inputText, setInputText] = useState('ABCDEFGHIJ');
   const [colorMode, setColorMode] = useState('rainbow');
@@ -670,27 +679,63 @@ function BrickTextBuilder() {
 
       // Camera controls
       let isDragging = false;
+      let isPanning = false;
       let prevMouse = { x: 0, y: 0 };
       let camAngle = { theta: 0, phi: Math.PI / 5 };
       let camDist = 50;
+      let camTarget = { x: 0, y: 5, z: 0 };
 
       const onMouseDown = (e) => {
-        isDragging = true;
         prevMouse = { x: e.clientX, y: e.clientY };
+        // Right click or middle click or shift+left click = pan
+        if (e.button === 2 || e.button === 1 || e.shiftKey) {
+          isPanning = true;
+          e.preventDefault();
+        } else {
+          isDragging = true;
+        }
       };
 
       const onMouseMove = (e) => {
-        if (!isDragging) return;
-        camAngle.theta -= (e.clientX - prevMouse.x) * 0.01;
-        camAngle.phi += (e.clientY - prevMouse.y) * 0.01;
-        camAngle.phi = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, camAngle.phi));
+        const deltaX = e.clientX - prevMouse.x;
+        const deltaY = e.clientY - prevMouse.y;
+
+        if (isPanning) {
+          // Pan the camera target
+          const panSpeed = 0.05 * (camDist / 50); // Scale pan speed with zoom level
+          camTarget.x -= deltaX * panSpeed;
+          camTarget.y += deltaY * panSpeed;
+          // Clamp target to reasonable bounds
+          camTarget.x = Math.max(-50, Math.min(50, camTarget.x));
+          camTarget.y = Math.max(-10, Math.min(30, camTarget.y));
+        } else if (isDragging) {
+          // Rotate camera
+          camAngle.theta -= deltaX * 0.01;
+          camAngle.phi += deltaY * 0.01;
+          camAngle.phi = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, camAngle.phi));
+        }
+
         prevMouse = { x: e.clientX, y: e.clientY };
       };
 
-      const onMouseUp = () => { isDragging = false; };
+      const onMouseUp = () => {
+        isDragging = false;
+        isPanning = false;
+      };
 
       const onWheel = (e) => {
-        camDist = Math.max(15, Math.min(150, camDist + e.deltaY * 0.05));
+        camDist = Math.max(10, Math.min(200, camDist + e.deltaY * 0.05));
+      };
+
+      const onContextMenu = (e) => {
+        e.preventDefault(); // Prevent right-click menu
+      };
+
+      const onDblClick = () => {
+        // Reset camera to default position
+        camAngle = { theta: 0, phi: Math.PI / 5 };
+        camDist = 50;
+        camTarget = { x: 0, y: 5, z: 0 };
       };
 
       renderer.domElement.addEventListener('mousedown', onMouseDown);
@@ -698,6 +743,8 @@ function BrickTextBuilder() {
       renderer.domElement.addEventListener('mouseup', onMouseUp);
       renderer.domElement.addEventListener('mouseleave', onMouseUp);
       renderer.domElement.addEventListener('wheel', onWheel);
+      renderer.domElement.addEventListener('contextmenu', onContextMenu);
+      renderer.domElement.addEventListener('dblclick', onDblClick);
 
       // Animation loop
       const animate = () => {
@@ -722,11 +769,76 @@ function BrickTextBuilder() {
           }
         });
 
-        // Update camera
-        camera.position.x = Math.sin(camAngle.theta) * Math.cos(camAngle.phi) * camDist;
-        camera.position.y = Math.sin(camAngle.phi) * camDist;
-        camera.position.z = Math.cos(camAngle.theta) * Math.cos(camAngle.phi) * camDist;
-        camera.lookAt(0, 5, 0);
+        // Update minifigure animation
+        const minifig = minifigRef.current;
+        const state = minifigStateRef.current;
+        if (minifig && state.phase !== 'idle') {
+          const { leftArmPivot, rightArmPivot, leftLegPivot, rightLegPivot } = minifig.userData;
+          const now = Date.now();
+
+          if (state.phase === 'walking') {
+            const walkDuration = 3000; // 3 seconds to walk
+            const elapsed = now - state.walkStartTime;
+            const progress = Math.min(elapsed / walkDuration, 1);
+
+            // Move position
+            minifig.position.x = state.startX + (state.targetX - state.startX) * progress;
+
+            // Walking animation (swing arms and legs)
+            const walkCycle = Math.sin(elapsed * 0.01) * 0.5;
+            leftLegPivot.rotation.x = walkCycle;
+            rightLegPivot.rotation.x = -walkCycle;
+            leftArmPivot.rotation.x = -walkCycle * 0.7;
+            rightArmPivot.rotation.x = walkCycle * 0.7;
+
+            // Check if reached destination
+            if (progress >= 1) {
+              // Reset to neutral pose
+              leftLegPivot.rotation.x = 0;
+              rightLegPivot.rotation.x = 0;
+              leftArmPivot.rotation.x = 0;
+              rightArmPivot.rotation.x = 0;
+              // Start turning to face front
+              state.phase = 'turning';
+              state.turnStartTime = now;
+            }
+          } else if (state.phase === 'turning') {
+            const turnDuration = 300; // 0.3 seconds for quick turn
+            const elapsed = now - state.turnStartTime;
+            const progress = Math.min(elapsed / turnDuration, 1);
+
+            // Simple 90-degree turn: from facing right to facing front (camera)
+            // Use easing for smoother motion
+            const eased = 1 - Math.pow(1 - progress, 2); // ease-out
+            minifig.rotation.y = Math.PI / 2 - (Math.PI / 2) * eased;
+
+            if (progress >= 1) {
+              minifig.rotation.y = 0; // Face front
+              state.phase = 'waving';
+              state.waveStartTime = now;
+            }
+          } else if (state.phase === 'waving') {
+            const waveDuration = 2500; // 2.5 seconds of waving
+            const elapsed = now - state.waveStartTime;
+
+            // Raise right arm and wave
+            rightArmPivot.rotation.x = -Math.PI * 0.6; // Arm up
+            rightArmPivot.rotation.z = Math.sin(elapsed * 0.012) * 0.4; // Wave back and forth
+
+            if (elapsed >= waveDuration) {
+              // Done waving, return to idle
+              rightArmPivot.rotation.x = 0;
+              rightArmPivot.rotation.z = 0;
+              state.phase = 'idle';
+            }
+          }
+        }
+
+        // Update camera (position relative to pan target)
+        camera.position.x = camTarget.x + Math.sin(camAngle.theta) * Math.cos(camAngle.phi) * camDist;
+        camera.position.y = camTarget.y + Math.sin(camAngle.phi) * camDist;
+        camera.position.z = camTarget.z + Math.cos(camAngle.theta) * Math.cos(camAngle.phi) * camDist;
+        camera.lookAt(camTarget.x, camTarget.y, camTarget.z);
 
         renderer.render(scene, camera);
       };
@@ -833,6 +945,195 @@ function BrickTextBuilder() {
 
     return group;
   }, [createStud]);
+
+  // ============================================
+  // CREATE MINIFIGURE
+  // Real LEGO minifigure proportions: ~4 studs tall
+  // ============================================
+  const createMinifigure = useCallback((THREE) => {
+    const group = new THREE.Group();
+    // Scale to match real LEGO proportions (4 studs tall = 4 * STUD_UNIT)
+    const s = STUD_UNIT; // base unit
+
+    // Colors
+    const skinMat = new THREE.MeshStandardMaterial({ color: '#ffcc00', roughness: 0.4 });
+    const torsoMat = new THREE.MeshStandardMaterial({ color: '#e53935', roughness: 0.4 });
+    const legMat = new THREE.MeshStandardMaterial({ color: '#1e88e5', roughness: 0.4 });
+    const handMat = new THREE.MeshStandardMaterial({ color: '#ffcc00', roughness: 0.4 });
+    const hairMat = new THREE.MeshStandardMaterial({ color: '#1a1a1a', roughness: 0.6 });
+    const glassesMat = new THREE.MeshStandardMaterial({ color: '#2a2a2a', roughness: 0.3 });
+    const lensMat = new THREE.MeshStandardMaterial({ color: '#88ccff', roughness: 0.1, transparent: true, opacity: 0.4 });
+
+    // Head (cylinder with stud on top) - about 1.2 studs diameter, 1 stud tall
+    const headGroup = new THREE.Group();
+    const headGeo = new THREE.CylinderGeometry(0.6 * s, 0.6 * s, 0.8 * s, 16);
+    const head = new THREE.Mesh(headGeo, skinMat);
+    head.castShadow = true;
+    headGroup.add(head);
+
+    // Head stud
+    const headStudGeo = new THREE.CylinderGeometry(0.2 * s, 0.2 * s, 0.15 * s, 16);
+    const headStud = new THREE.Mesh(headStudGeo, skinMat);
+    headStud.position.y = 0.475 * s;
+    headStud.castShadow = true;
+    headGroup.add(headStud);
+
+    // Black hair (bowl cut style for Asian male)
+    const hairGeo = new THREE.SphereGeometry(0.62 * s, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const hair = new THREE.Mesh(hairGeo, hairMat);
+    hair.position.y = 0.15 * s;
+    hair.castShadow = true;
+    headGroup.add(hair);
+
+    // Hair front fringe
+    const fringeGeo = new THREE.BoxGeometry(0.9 * s, 0.15 * s, 0.25 * s);
+    const fringe = new THREE.Mesh(fringeGeo, hairMat);
+    fringe.position.set(0, 0.3 * s, 0.45 * s);
+    headGroup.add(fringe);
+
+    // Eyes (slightly narrower for Asian features)
+    const eyeMat = new THREE.MeshStandardMaterial({ color: '#1a1a1a' });
+    const eyeGeo = new THREE.BoxGeometry(0.1 * s, 0.05 * s, 0.02 * s);
+    const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+    leftEye.position.set(-0.18 * s, 0.05 * s, 0.6 * s);
+    headGroup.add(leftEye);
+    const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+    rightEye.position.set(0.18 * s, 0.05 * s, 0.6 * s);
+    headGroup.add(rightEye);
+
+    // Nose (small cylinder pointing forward)
+    const noseGeo = new THREE.CylinderGeometry(0.04 * s, 0.06 * s, 0.1 * s, 8);
+    const nose = new THREE.Mesh(noseGeo, skinMat);
+    nose.position.set(0, -0.02 * s, 0.6 * s);
+    nose.rotation.x = Math.PI / 2;
+    headGroup.add(nose);
+
+    // Mouth (simple curved line using a flat box)
+    const mouthGeo = new THREE.BoxGeometry(0.2 * s, 0.03 * s, 0.02 * s);
+    const mouth = new THREE.Mesh(mouthGeo, eyeMat);
+    mouth.position.set(0, -0.15 * s, 0.58 * s);
+    headGroup.add(mouth);
+
+    // Simple rectangular glasses
+    const glassesGroup = new THREE.Group();
+
+    // Left lens (rectangular frame with lens)
+    const lensW = 0.24 * s;
+    const lensH = 0.16 * s;
+    const frameThick = 0.025 * s;
+
+    // Left frame outline (using EdgesGeometry-like approach with boxes)
+    const leftFrameOuter = new THREE.BoxGeometry(lensW, lensH, frameThick);
+    const leftFrame = new THREE.Mesh(leftFrameOuter, glassesMat);
+    leftFrame.position.set(-0.2 * s, 0.05 * s, 0.62 * s);
+    glassesGroup.add(leftFrame);
+
+    // Left lens (slightly smaller, inset)
+    const leftLensGeo = new THREE.BoxGeometry(lensW - frameThick * 2, lensH - frameThick * 2, frameThick * 0.5);
+    const leftLens = new THREE.Mesh(leftLensGeo, lensMat);
+    leftLens.position.set(-0.2 * s, 0.05 * s, 0.625 * s);
+    glassesGroup.add(leftLens);
+
+    // Right frame
+    const rightFrame = new THREE.Mesh(leftFrameOuter.clone(), glassesMat);
+    rightFrame.position.set(0.2 * s, 0.05 * s, 0.62 * s);
+    glassesGroup.add(rightFrame);
+
+    // Right lens
+    const rightLens = new THREE.Mesh(leftLensGeo.clone(), lensMat);
+    rightLens.position.set(0.2 * s, 0.05 * s, 0.625 * s);
+    glassesGroup.add(rightLens);
+
+    // Bridge connecting the two lenses
+    const bridgeGeo = new THREE.BoxGeometry(0.16 * s, frameThick, frameThick);
+    const bridge = new THREE.Mesh(bridgeGeo, glassesMat);
+    bridge.position.set(0, 0.05 * s, 0.62 * s);
+    glassesGroup.add(bridge);
+
+    // Temple arms (sides going to ears)
+    const templeGeo = new THREE.BoxGeometry(0.35 * s, frameThick, frameThick);
+    const leftTemple = new THREE.Mesh(templeGeo, glassesMat);
+    leftTemple.position.set(-0.48 * s, 0.05 * s, 0.45 * s);
+    glassesGroup.add(leftTemple);
+    const rightTemple = new THREE.Mesh(templeGeo, glassesMat);
+    rightTemple.position.set(0.48 * s, 0.05 * s, 0.45 * s);
+    glassesGroup.add(rightTemple);
+
+    headGroup.add(glassesGroup);
+
+    headGroup.position.y = 2.35 * s;
+    group.add(headGroup);
+
+    // Torso - about 1.25 studs wide, 1.2 studs tall
+    const torsoGeo = new THREE.BoxGeometry(1.0 * s, 0.95 * s, 0.6 * s);
+    const torso = new THREE.Mesh(torsoGeo, torsoMat);
+    torso.position.y = 1.5 * s;
+    torso.castShadow = true;
+    group.add(torso);
+
+    // Left arm pivot (at shoulder)
+    const leftArmPivot = new THREE.Group();
+    leftArmPivot.position.set(-0.65 * s, 1.85 * s, 0);
+    const leftArmGeo = new THREE.BoxGeometry(0.3 * s, 0.8 * s, 0.3 * s);
+    const leftArm = new THREE.Mesh(leftArmGeo, skinMat);
+    leftArm.position.y = -0.4 * s;
+    leftArm.castShadow = true;
+    leftArmPivot.add(leftArm);
+    // Left hand
+    const leftHandGeo = new THREE.CylinderGeometry(0.1 * s, 0.1 * s, 0.2 * s, 8);
+    const leftHand = new THREE.Mesh(leftHandGeo, handMat);
+    leftHand.position.y = -0.9 * s;
+    leftHand.rotation.x = Math.PI / 2;
+    leftArmPivot.add(leftHand);
+    group.add(leftArmPivot);
+
+    // Right arm pivot (at shoulder)
+    const rightArmPivot = new THREE.Group();
+    rightArmPivot.position.set(0.65 * s, 1.85 * s, 0);
+    const rightArmGeo = new THREE.BoxGeometry(0.3 * s, 0.8 * s, 0.3 * s);
+    const rightArm = new THREE.Mesh(rightArmGeo, skinMat);
+    rightArm.position.y = -0.4 * s;
+    rightArm.castShadow = true;
+    rightArmPivot.add(rightArm);
+    // Right hand
+    const rightHandGeo = new THREE.CylinderGeometry(0.1 * s, 0.1 * s, 0.2 * s, 8);
+    const rightHand = new THREE.Mesh(rightHandGeo, handMat);
+    rightHand.position.y = -0.9 * s;
+    rightHand.rotation.x = Math.PI / 2;
+    rightArmPivot.add(rightHand);
+    group.add(rightArmPivot);
+
+    // Left leg pivot (at hip) - leg bottom should be at y=0
+    const leftLegPivot = new THREE.Group();
+    leftLegPivot.position.set(-0.25 * s, 1.0 * s, 0);
+    const leftLegGeo = new THREE.BoxGeometry(0.4 * s, 1.0 * s, 0.45 * s);
+    const leftLeg = new THREE.Mesh(leftLegGeo, legMat);
+    leftLeg.position.y = -0.5 * s;
+    leftLeg.castShadow = true;
+    leftLegPivot.add(leftLeg);
+    group.add(leftLegPivot);
+
+    // Right leg pivot (at hip)
+    const rightLegPivot = new THREE.Group();
+    rightLegPivot.position.set(0.25 * s, 1.0 * s, 0);
+    const rightLegGeo = new THREE.BoxGeometry(0.4 * s, 1.0 * s, 0.45 * s);
+    const rightLeg = new THREE.Mesh(rightLegGeo, legMat);
+    rightLeg.position.y = -0.5 * s;
+    rightLeg.castShadow = true;
+    rightLegPivot.add(rightLeg);
+    group.add(rightLegPivot);
+
+    // Store references for animation
+    group.userData = {
+      leftArmPivot,
+      rightArmPivot,
+      leftLegPivot,
+      rightLegPivot,
+      headGroup
+    };
+
+    return group;
+  }, []);
 
   // ============================================
   // BRICK PLANNING ALGORITHM
@@ -1053,11 +1354,14 @@ function BrickTextBuilder() {
     bricksRef.current.forEach(b => scene.remove(b));
     bricksRef.current = [];
     if (baseplateRef.current) scene.remove(baseplateRef.current);
+    if (minifigRef.current) scene.remove(minifigRef.current);
+    minifigStateRef.current = { phase: 'idle', targetX: 0, startX: 0, walkStartTime: 0, turnStartTime: 0, waveStartTime: 0 };
     setProgress(0);
 
     const text = inputText.toUpperCase();
     const letterSpacing = 2;
     const totalPixelWidth = text.length * FONT_WIDTH + (text.length - 1) * letterSpacing;
+    const startX = -totalPixelWidth / 2;
 
     // Create baseplate
     const bpWidth = Math.max(totalPixelWidth + 8, 20);
@@ -1067,9 +1371,26 @@ function BrickTextBuilder() {
     scene.add(baseplate);
     baseplateRef.current = baseplate;
 
+    // Create minifigure only if text contains "MINGJER"
+    const showMinifig = text.includes('MINGJER');
+    if (showMinifig) {
+      const minifig = createMinifigure(THREE);
+      const minifigStartX = -bpWidth * STUD_UNIT / 2 - 3;
+      // Calculate position after the "R" in "MINGJER"
+      const mingjerStart = text.indexOf('MINGJER');
+      const rCharIdx = mingjerStart + 6; // R is the 7th character (index 6) of MINGJER
+      const rEndX = (startX + rCharIdx * (FONT_WIDTH + letterSpacing) + FONT_WIDTH) * STUD_UNIT;
+      const minifigTargetX = rEndX + 1; // Stop just past the R
+      minifig.position.set(minifigStartX, PLATE_HEIGHT / 2, bpDepth * STUD_UNIT / 2 - 1); // Walk in front of text, within plate
+      minifig.rotation.y = Math.PI / 2; // Face right (walking direction)
+      scene.add(minifig);
+      minifigRef.current = minifig;
+      minifigStateRef.current.startX = minifigStartX;
+      minifigStateRef.current.targetX = minifigTargetX;
+    }
+
     // Plan all bricks
     const allBricks = [];
-    const startX = -totalPixelWidth / 2;
 
     text.split('').forEach((char, charIdx) => {
       const pattern = FONT[char];
@@ -1179,6 +1500,14 @@ function BrickTextBuilder() {
 
     setTotalBricks(orderedBricks.length);
 
+    // Function to start minifigure walking (only if minifigure exists)
+    const startMinifigWalk = () => {
+      if (minifigRef.current) {
+        minifigStateRef.current.phase = 'walking';
+        minifigStateRef.current.walkStartTime = Date.now();
+      }
+    };
+
     if (instantMode) {
       // Place all instantly
       orderedBricks.forEach(bd => {
@@ -1189,6 +1518,8 @@ function BrickTextBuilder() {
         bricksRef.current.push(brick);
       });
       setProgress(orderedBricks.length);
+      // Start minifigure walking immediately
+      setTimeout(startMinifigWalk, 300);
     } else {
       // Animate
       setIsBuilding(true);
@@ -1197,6 +1528,8 @@ function BrickTextBuilder() {
         if (idx >= orderedBricks.length) {
           clearInterval(buildIntervalRef.current);
           setIsBuilding(false);
+          // Start minifigure walking after build completes
+          setTimeout(startMinifigWalk, 500);
           return;
         }
 
@@ -1211,7 +1544,7 @@ function BrickTextBuilder() {
         setProgress(idx);
       }, 200 - speed * 1.5);
     }
-  }, [inputText, colorMode, selectedColor, speed, instantMode, createBrick, createBaseplate, planBricks]);
+  }, [inputText, colorMode, selectedColor, speed, instantMode, createBrick, createBaseplate, createMinifigure, planBricks]);
 
   // Initial build
   useEffect(() => {
@@ -1291,7 +1624,8 @@ function BrickTextBuilder() {
             ['U-Z', 'UVWXYZ'],
             ['0-9', '0123456789'],
             ['HELLO', 'HELLO'],
-            ['BRICK', 'BRICK']
+            ['BRICK', 'BRICK'],
+            ['MINGJER', 'MINGJER']
           ].map(([label, text]) => (
             <button
               key={label}
@@ -1332,7 +1666,7 @@ function BrickTextBuilder() {
           )}
 
           <span className="text-gray-500 text-sm">
-            {totalBricks} bricks • Drag to rotate • Scroll to zoom
+            {totalBricks} bricks • Drag to rotate • Right-drag/Shift-drag to pan • Scroll to zoom • Double-click to reset
           </span>
           <span className="text-gray-600 text-xs ml-4">
             Fan project • Not affiliated with any brick manufacturer
