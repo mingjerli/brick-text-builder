@@ -631,6 +631,7 @@ function BrickTextBuilder() {
   const [isBuilding, setIsBuilding] = useState(false);
   const [progress, setProgress] = useState(0);
   const [totalBricks, setTotalBricks] = useState(0);
+  const [brickCounts, setBrickCounts] = useState({ 1: 0, 2: 0, 3: 0, 4: 0 });
 
   // ============================================
   // THREE.JS SETUP
@@ -1500,6 +1501,13 @@ function BrickTextBuilder() {
 
     setTotalBricks(orderedBricks.length);
 
+    // Count bricks by type
+    const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    orderedBricks.forEach(brick => {
+      counts[brick.width] = (counts[brick.width] || 0) + 1;
+    });
+    setBrickCounts(counts);
+
     // Function to start minifigure walking (only if minifigure exists)
     const startMinifigWalk = () => {
       if (minifigRef.current) {
@@ -1666,7 +1674,27 @@ function BrickTextBuilder() {
           )}
 
           <span className="text-gray-500 text-sm">
-            {totalBricks} bricks • Drag to rotate • Right-drag/Shift-drag to pan • Scroll to zoom • Double-click to reset
+            Drag to rotate • Right-drag/Shift-drag to pan • Scroll to zoom • Double-click to reset
+          </span>
+        </div>
+
+        {/* Brick inventory */}
+        <div className="flex flex-wrap gap-3 items-center mt-3 p-3 bg-gray-700 rounded">
+          <span className="text-white font-semibold">Parts List:</span>
+          <span className="text-gray-300 text-sm">
+            2×4: <span className="text-yellow-400 font-mono">{brickCounts[4]}</span>
+          </span>
+          <span className="text-gray-300 text-sm">
+            2×3: <span className="text-yellow-400 font-mono">{brickCounts[3]}</span>
+          </span>
+          <span className="text-gray-300 text-sm">
+            2×2: <span className="text-yellow-400 font-mono">{brickCounts[2]}</span>
+          </span>
+          <span className="text-gray-300 text-sm">
+            2×1: <span className="text-yellow-400 font-mono">{brickCounts[1]}</span>
+          </span>
+          <span className="text-white font-semibold ml-4">
+            Total: <span className="text-yellow-400">{totalBricks}</span> bricks
           </span>
           <span className="text-gray-600 text-xs ml-4">
             Fan project • Not affiliated with any brick manufacturer
