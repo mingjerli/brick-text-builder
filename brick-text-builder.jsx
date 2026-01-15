@@ -681,9 +681,9 @@ function BrickTextBuilder() {
       let isDragging = false;
       let isPanning = false;
       let prevMouse = { x: 0, y: 0 };
-      let camAngle = { theta: 0, phi: Math.PI / 5 };
+      let camAngle = { theta: 0, phi: 0 };
       let camDist = 50;
-      let camTarget = { x: 0, y: 5, z: 0 };
+      let camTarget = { x: 0, y: 6, z: 0 };
 
       const onMouseDown = (e) => {
         prevMouse = { x: e.clientX, y: e.clientY };
@@ -712,7 +712,7 @@ function BrickTextBuilder() {
           // Rotate camera
           camAngle.theta -= deltaX * 0.01;
           camAngle.phi += deltaY * 0.01;
-          camAngle.phi = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, camAngle.phi));
+          camAngle.phi = Math.max(-Math.PI / 4, Math.min(Math.PI / 2 - 0.1, camAngle.phi));
         }
 
         prevMouse = { x: e.clientX, y: e.clientY };
@@ -733,9 +733,9 @@ function BrickTextBuilder() {
 
       const onDblClick = () => {
         // Reset camera to default position
-        camAngle = { theta: 0, phi: Math.PI / 5 };
+        camAngle = { theta: 0, phi: 0 };
         camDist = 50;
-        camTarget = { x: 0, y: 5, z: 0 };
+        camTarget = { x: 0, y: 6, z: 0 };
       };
 
       renderer.domElement.addEventListener('mousedown', onMouseDown);
