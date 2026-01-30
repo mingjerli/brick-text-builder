@@ -1582,9 +1582,24 @@ function BrickTextBuilder() {
     const palette = SEASONAL_COLORS[colorMode] || COLORS;
     const allBricks = [];
 
+    // In plate mode, expand each font row into 3 rows so planBricks
+    // plans at plate granularity with natural seam interlocking
+    const usePlateGrid = pieceType === 'plate';
+    const gridHeight = usePlateGrid ? FONT_HEIGHT * 3 : FONT_HEIGHT;
+    const pieceHeight = usePlateGrid ? PIECE_PLATE_HEIGHT : BRICK_HEIGHT;
+
     text.split('').forEach((char, charIdx) => {
-      const pattern = FONT[char];
+      let pattern = FONT[char];
       if (!pattern) return;
+
+      if (usePlateGrid) {
+        const expanded = [];
+        for (const row of pattern) {
+          expanded.push(row, row, row);
+        }
+        pattern = expanded;
+      }
+
       const color = colorMode === 'rainbow'
         ? COLORS[charIdx % COLORS.length]
         : colorMode === 'single'
@@ -1597,10 +1612,11 @@ function BrickTextBuilder() {
 
       charBricks.forEach(brick => {
         const worldX = (charStartX + brick.col + brick.width / 2) * STUD_UNIT;
-        const worldY = PLATE_HEIGHT / 2 + BRICK_HEIGHT / 2 + (FONT_HEIGHT - 1 - brick.row) * BRICK_HEIGHT;
+        const worldY = PLATE_HEIGHT / 2 + pieceHeight / 2 + (gridHeight - 1 - brick.row) * pieceHeight;
 
         allBricks.push({
           ...brick,
+          type: usePlateGrid ? 'plate' : 'brick',
           charIdx,
           worldX,
           worldY,
@@ -1686,7 +1702,7 @@ function BrickTextBuilder() {
       const brick = allBricks[brickIdx];
       
       // Bottom row is always placeable (on baseplate)
-      if (brick.row === FONT_HEIGHT - 1) return true;
+      if (brick.row === gridHeight - 1) return true;
       
       // Check if any placed brick overlaps (row above or below)
       for (const placedIdx of placed) {
@@ -1738,13 +1754,15 @@ function BrickTextBuilder() {
       }
     }
 
-    // Expand bricks into plates if needed
-    let finalBricks = orderedBricks;
-    if (pieceType === 'plate' || pieceType === 'mixture') {
+    // Expand bricks into plates for mixture mode (plate mode already planned at plate level)
+    let finalBricks;
+    if (pieceType === 'plate') {
+      // Already planned at plate granularity with interlocking — use as-is
+      finalBricks = orderedBricks;
+    } else if (pieceType === 'mixture') {
       const expanded = [];
       for (const brick of orderedBricks) {
-        const usePlates = pieceType === 'plate' || (pieceType === 'mixture' && Math.random() < 0.5);
-        if (usePlates) {
+        if (Math.random() < 0.5) {
           // Replace one brick with 3 stacked plates
           // In random/seasonal modes, give each plate a different color
           const useRandomPlateColors = colorMode === 'random' || SEASONAL_COLORS[colorMode];
@@ -1769,7 +1787,7 @@ function BrickTextBuilder() {
       }
       finalBricks = expanded;
     } else {
-      finalBricks = orderedBricks.map(b => ({ ...b, type: 'brick' }));
+      finalBricks = orderedBricks;
     }
 
     setTotalBricks(finalBricks.length);
