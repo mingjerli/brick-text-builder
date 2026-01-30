@@ -675,8 +675,8 @@ function BrickTextBuilder() {
   const [isBuilding, setIsBuilding] = useState(false);
   const [progress, setProgress] = useState(0);
   const [totalBricks, setTotalBricks] = useState(0);
-  const [brickCounts, setBrickCounts] = useState({ 1: 0, 2: 0, 3: 0, 4: 0 });
-  const [plateCounts, setPlateCounts] = useState({ 1: 0, 2: 0, 3: 0, 4: 0 });
+  const [partsList, setPartsList] = useState([]);
+  const [expandedShapes, setExpandedShapes] = useState(new Set());
 
   // ============================================
   // THREE.JS SETUP
@@ -1792,18 +1792,22 @@ function BrickTextBuilder() {
 
     setTotalBricks(finalBricks.length);
 
-    // Count pieces by type and width
-    const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    const plateCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    // Count pieces by type, width, and color
+    const partsMap = {};
     finalBricks.forEach(brick => {
-      if (brick.type === 'plate') {
-        plateCounts[brick.width] = (plateCounts[brick.width] || 0) + 1;
-      } else {
-        counts[brick.width] = (counts[brick.width] || 0) + 1;
+      const key = `${brick.type || 'brick'}-${brick.width}-${brick.color}`;
+      if (!partsMap[key]) {
+        partsMap[key] = { type: brick.type || 'brick', width: brick.width, color: brick.color, count: 0 };
       }
+      partsMap[key].count++;
     });
-    setBrickCounts(counts);
-    setPlateCounts(plateCounts);
+    // Sort: bricks before plates, then by width descending, then by color
+    const parts = Object.values(partsMap).sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'brick' ? -1 : 1;
+      if (a.width !== b.width) return b.width - a.width;
+      return a.color.localeCompare(b.color);
+    });
+    setPartsList(parts);
 
     // Function to start minifigure walking (only if minifigure exists)
     const startMinifigWalk = () => {
@@ -2003,32 +2007,70 @@ function BrickTextBuilder() {
         </div>
 
         {/* Parts inventory */}
-        <div className="flex flex-wrap gap-3 items-center mt-3 p-3 bg-gray-700 rounded">
-          <span className="text-white font-semibold">Parts List:</span>
-          {(brickCounts[4] > 0 || brickCounts[3] > 0 || brickCounts[2] > 0 || brickCounts[1] > 0) && (
-            <>
-              <span className="text-gray-400 text-xs">Bricks:</span>
-              {brickCounts[4] > 0 && <span className="text-gray-300 text-sm">2×4: <span className="text-yellow-400 font-mono">{brickCounts[4]}</span></span>}
-              {brickCounts[3] > 0 && <span className="text-gray-300 text-sm">2×3: <span className="text-yellow-400 font-mono">{brickCounts[3]}</span></span>}
-              {brickCounts[2] > 0 && <span className="text-gray-300 text-sm">2×2: <span className="text-yellow-400 font-mono">{brickCounts[2]}</span></span>}
-              {brickCounts[1] > 0 && <span className="text-gray-300 text-sm">2×1: <span className="text-yellow-400 font-mono">{brickCounts[1]}</span></span>}
-            </>
-          )}
-          {(plateCounts[4] > 0 || plateCounts[3] > 0 || plateCounts[2] > 0 || plateCounts[1] > 0) && (
-            <>
-              <span className="text-gray-400 text-xs ml-2">Plates:</span>
-              {plateCounts[4] > 0 && <span className="text-gray-300 text-sm">2×4: <span className="text-cyan-400 font-mono">{plateCounts[4]}</span></span>}
-              {plateCounts[3] > 0 && <span className="text-gray-300 text-sm">2×3: <span className="text-cyan-400 font-mono">{plateCounts[3]}</span></span>}
-              {plateCounts[2] > 0 && <span className="text-gray-300 text-sm">2×2: <span className="text-cyan-400 font-mono">{plateCounts[2]}</span></span>}
-              {plateCounts[1] > 0 && <span className="text-gray-300 text-sm">2×1: <span className="text-cyan-400 font-mono">{plateCounts[1]}</span></span>}
-            </>
-          )}
-          <span className="text-white font-semibold ml-4">
-            Total: <span className="text-yellow-400">{totalBricks}</span> pieces
-          </span>
-          <span className="text-gray-600 text-xs ml-4">
-            Fan project • Not affiliated with any brick manufacturer
-          </span>
+        <div className="mt-3 p-3 bg-gray-700 rounded">
+          <div className="flex items-center gap-4 mb-2">
+            <span className="text-white font-semibold">Parts List:</span>
+            <span className="text-white font-semibold">
+              Total: <span className="text-yellow-400">{totalBricks}</span> pieces
+            </span>
+            <span className="text-gray-600 text-xs">
+              Fan project • Not affiliated with any brick manufacturer
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(() => {
+              // Group parts by shape (type + width)
+              const shapeMap = {};
+              partsList.forEach(part => {
+                const shapeKey = `${part.type}-${part.width}`;
+                if (!shapeMap[shapeKey]) {
+                  shapeMap[shapeKey] = { type: part.type, width: part.width, total: 0, colors: [] };
+                }
+                shapeMap[shapeKey].total += part.count;
+                shapeMap[shapeKey].colors.push({ color: part.color, count: part.count });
+              });
+              const shapes = Object.entries(shapeMap).sort((a, b) => {
+                const [, sa] = a, [, sb] = b;
+                if (sa.type !== sb.type) return sa.type === 'brick' ? -1 : 1;
+                return sb.width - sa.width;
+              });
+              return shapes.map(([shapeKey, shape]) => {
+                const isExpanded = expandedShapes.has(shapeKey);
+                return (
+                  <div key={shapeKey} className="flex flex-col">
+                    <div
+                      className="flex items-center gap-1.5 bg-gray-800 rounded px-2 py-1 cursor-pointer select-none hover:bg-gray-750"
+                      onClick={() => setExpandedShapes(prev => {
+                        const next = new Set(prev);
+                        if (next.has(shapeKey)) next.delete(shapeKey);
+                        else next.add(shapeKey);
+                        return next;
+                      })}
+                    >
+                      <span className="text-gray-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
+                      <span className="text-gray-300 text-xs">
+                        {shape.type === 'plate' ? 'P' : 'B'} 2×{shape.width}
+                      </span>
+                      <span className="text-yellow-400 font-mono text-xs">×{shape.total}</span>
+                    </div>
+                    {isExpanded && (
+                      <div className="flex flex-wrap gap-1 mt-1 ml-2">
+                        {shape.colors.map((c, j) => (
+                          <div key={j} className="flex items-center gap-1 bg-gray-800 rounded px-1.5 py-0.5">
+                            <span
+                              className="inline-block w-3 h-3 rounded-sm border border-gray-600"
+                              style={{ backgroundColor: c.color }}
+                            />
+                            <span className="text-yellow-400 font-mono text-xs">×{c.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
+          </div>
         </div>
       </div>
 
