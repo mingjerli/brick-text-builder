@@ -595,7 +595,48 @@ const COLORS = [
   '#ff7800', // bright orange
   '#a5499b', // bright purple / magenta
   '#00bcd4', // bright cyan / medium azure
+  '#ffffff', // white
+  '#1b1b1b', // black
 ];
+
+const SEASONAL_COLORS = {
+  spring: [
+    '#ff69b4', // pink (cherry blossom)
+    '#ff91a4', // salmon pink
+    '#98fb98', // pale green
+    '#00c853', // vivid green
+    '#ffeb3b', // yellow
+    '#e040fb', // light purple (lilac)
+    '#ffffff', // white
+  ],
+  summer: [
+    '#ff1744', // vivid red
+    '#ff9100', // orange
+    '#ffea00', // bright yellow
+    '#00c853', // green
+    '#00b0ff', // sky blue
+    '#2979ff', // ocean blue
+    '#00e5ff', // turquoise
+  ],
+  fall: [
+    '#d84315', // burnt orange
+    '#bf360c', // rust
+    '#f9a825', // golden yellow
+    '#ff6f00', // amber
+    '#6d4c41', // brown
+    '#8d6e63', // tan
+    '#c62828', // dark red
+  ],
+  winter: [
+    '#e3f2fd', // ice blue
+    '#90caf9', // light blue
+    '#42a5f5', // medium blue
+    '#1565c0', // dark blue
+    '#ffffff', // snow white
+    '#b0bec5', // silver grey
+    '#ce93d8', // frost purple
+  ],
+};
 
 // ============================================
 // BRICK DIMENSIONS (relative units)
@@ -1499,17 +1540,17 @@ function BrickTextBuilder() {
     }
 
     // Plan all bricks
+    const palette = SEASONAL_COLORS[colorMode] || COLORS;
     const allBricks = [];
 
     text.split('').forEach((char, charIdx) => {
       const pattern = FONT[char];
       if (!pattern) return;
-
       const color = colorMode === 'rainbow'
         ? COLORS[charIdx % COLORS.length]
         : colorMode === 'single'
           ? selectedColor
-          : '#ff0000'; // placeholder for random, will be reassigned below
+          : '#ff0000'; // placeholder for random/seasonal, will be reassigned below
 
       const maxWidth = brickSize === 'small' ? 2 : 4;
       const charBricks = planBricks(pattern, color, maxWidth);
@@ -1531,8 +1572,8 @@ function BrickTextBuilder() {
       });
     });
 
-    // Random mode: greedy graph coloring so no adjacent bricks share a color
-    if (colorMode === 'random') {
+    // Random/seasonal mode: greedy graph coloring so no adjacent bricks share a color
+    if (colorMode === 'random' || SEASONAL_COLORS[colorMode]) {
       // Two bricks are adjacent if they touch vertically (adjacent rows, overlapping columns)
       // or horizontally (same row, one ends where the other begins)
       const isAdjacent = (a, b) => {
@@ -1569,15 +1610,15 @@ function BrickTextBuilder() {
         }
         // Collect all available colors, then pick one at random
         const available = [];
-        for (let c = 0; c < COLORS.length; c++) {
+        for (let c = 0; c < palette.length; c++) {
           if (!neighborColors.has(c)) available.push(c);
         }
         colorAssignment[i] = available[Math.floor(Math.random() * available.length)];
       }
 
-      // Assign actual colors from COLORS palette
+      // Assign actual colors from the active palette
       for (let i = 0; i < allBricks.length; i++) {
-        allBricks[i].color = COLORS[colorAssignment[i] % COLORS.length];
+        allBricks[i].color = palette[colorAssignment[i] % palette.length];
       }
     }
 
@@ -1766,6 +1807,10 @@ function BrickTextBuilder() {
             <option value="rainbow">🌈 Rainbow</option>
             <option value="single">🎨 Single</option>
             <option value="random">🎲 Random</option>
+            <option value="spring">🌸 Spring</option>
+            <option value="summer">☀️ Summer</option>
+            <option value="fall">🍂 Fall</option>
+            <option value="winter">❄️ Winter</option>
           </select>
 
           <select
