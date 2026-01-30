@@ -588,13 +588,13 @@ const FONT = {
 };
 
 const COLORS = [
-  '#e53935', // red
-  '#1e88e5', // blue  
-  '#43a047', // green
-  '#fdd835', // yellow
-  '#fb8c00', // orange
-  '#8e24aa', // purple
-  '#00acc1', // cyan
+  '#ff0000', // bright red
+  '#0057a8', // bright blue
+  '#00852b', // bright green
+  '#ffd700', // bright yellow
+  '#ff7800', // bright orange
+  '#a5499b', // bright purple / magenta
+  '#00bcd4', // bright cyan / medium azure
 ];
 
 // ============================================
@@ -1401,7 +1401,7 @@ function BrickTextBuilder() {
         ? COLORS[charIdx % COLORS.length]
         : colorMode === 'single'
           ? selectedColor
-          : COLORS[Math.floor(Math.random() * COLORS.length)];
+          : '#ff0000'; // placeholder for random, will be reassigned below
 
       const charBricks = planBricks(pattern, color);
       const charStartX = startX + charIdx * (FONT_WIDTH + letterSpacing);
@@ -1421,6 +1421,56 @@ function BrickTextBuilder() {
         });
       });
     });
+
+    // Random mode: greedy graph coloring so no adjacent bricks share a color
+    if (colorMode === 'random') {
+      // Two bricks are adjacent if they touch vertically (adjacent rows, overlapping columns)
+      // or horizontally (same row, one ends where the other begins)
+      const isAdjacent = (a, b) => {
+        if (a.charIdx !== b.charIdx) return false;
+        const rowDiff = Math.abs(a.row - b.row);
+        if (rowDiff === 0) {
+          // Same row: adjacent if one brick ends exactly where the other starts
+          return a.pixelEnd + 1 === b.pixelStart || b.pixelEnd + 1 === a.pixelStart;
+        }
+        if (rowDiff === 1) {
+          // Adjacent rows: overlapping columns
+          return a.pixelStart <= b.pixelEnd && b.pixelStart <= a.pixelEnd;
+        }
+        return false;
+      };
+
+      // Build adjacency lists
+      const adj = allBricks.map(() => []);
+      for (let i = 0; i < allBricks.length; i++) {
+        for (let j = i + 1; j < allBricks.length; j++) {
+          if (isAdjacent(allBricks[i], allBricks[j])) {
+            adj[i].push(j);
+            adj[j].push(i);
+          }
+        }
+      }
+
+      // Greedy coloring with randomized color selection
+      const colorAssignment = new Array(allBricks.length).fill(-1);
+      for (let i = 0; i < allBricks.length; i++) {
+        const neighborColors = new Set();
+        for (const n of adj[i]) {
+          if (colorAssignment[n] !== -1) neighborColors.add(colorAssignment[n]);
+        }
+        // Collect all available colors, then pick one at random
+        const available = [];
+        for (let c = 0; c < COLORS.length; c++) {
+          if (!neighborColors.has(c)) available.push(c);
+        }
+        colorAssignment[i] = available[Math.floor(Math.random() * available.length)];
+      }
+
+      // Assign actual colors from COLORS palette
+      for (let i = 0; i < allBricks.length; i++) {
+        allBricks[i].color = COLORS[colorAssignment[i] % COLORS.length];
+      }
+    }
 
     // ============================================
     // CONNECTIVITY-AWARE ORDERING
