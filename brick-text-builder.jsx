@@ -626,6 +626,7 @@ function BrickTextBuilder() {
   const [inputText, setInputText] = useState('ABCDEFGHIJ');
   const [colorMode, setColorMode] = useState('rainbow');
   const [selectedColor, setSelectedColor] = useState('#e53935');
+  const [brickSize, setBrickSize] = useState('all');
   const [speed, setSpeed] = useState(80);
   const [instantMode, setInstantMode] = useState(true);
   const [isBuilding, setIsBuilding] = useState(false);
@@ -1141,7 +1142,7 @@ function BrickTextBuilder() {
   // Builds bottom-up, placing bricks to span
   // across seams in the row below
   // ============================================
-  const planBricks = useCallback((grid, color) => {
+  const planBricks = useCallback((grid, color, maxWidth = 4) => {
     const height = grid.length;
     const width = grid[0].length;
     const bricks = [];
@@ -1181,7 +1182,7 @@ function BrickTextBuilder() {
           
           // Find seams below within our remaining range
           const seamsInRange = [];
-          for (let c = col + 1; c <= run.end && c < col + 4; c++) {
+          for (let c = col + 1; c <= run.end && c < col + maxWidth; c++) {
             if (seamsBelow[c]) seamsInRange.push(c);
           }
           
@@ -1196,13 +1197,13 @@ function BrickTextBuilder() {
             // Use smallest brick that spans the seam, but at least 2
             if (minWidthToSpan <= 2 && remaining >= 2) {
               brickW = 2;
-            } else if (minWidthToSpan <= 3 && remaining >= 3) {
+            } else if (minWidthToSpan <= 3 && remaining >= 3 && maxWidth >= 3) {
               brickW = 3;
-            } else if (minWidthToSpan <= 4 && remaining >= 4) {
+            } else if (minWidthToSpan <= 4 && remaining >= 4 && maxWidth >= 4) {
               brickW = 4;
-            } else if (remaining >= 4) {
+            } else if (remaining >= 4 && maxWidth >= 4) {
               brickW = 4;
-            } else if (remaining >= 3) {
+            } else if (remaining >= 3 && maxWidth >= 3) {
               brickW = 3;
             } else if (remaining >= 2) {
               brickW = 2;
@@ -1218,7 +1219,7 @@ function BrickTextBuilder() {
             // Choose size that doesn't create seam at same position as below
             
             let bestWidth = 0;
-            for (const tryWidth of [4, 3, 2]) {
+            for (const tryWidth of [4, 3, 2].filter(w => w <= maxWidth)) {
               if (remaining >= tryWidth) {
                 const wouldSeamAt = col + tryWidth;
                 // Check if this seam position conflicts with seam below
@@ -1231,8 +1232,8 @@ function BrickTextBuilder() {
             
             if (bestWidth === 0) {
               // All options create aligned seams, just use largest
-              if (remaining >= 4) brickW = 4;
-              else if (remaining >= 3) brickW = 3;
+              if (remaining >= 4 && maxWidth >= 4) brickW = 4;
+              else if (remaining >= 3 && maxWidth >= 3) brickW = 3;
               else if (remaining >= 2) brickW = 2;
               else brickW = 1;
             } else {
@@ -1280,7 +1281,7 @@ function BrickTextBuilder() {
             // Check if we should merge
             let shouldMerge = false;
             
-            if (combinedWidth <= 4) {
+            if (combinedWidth <= maxWidth) {
               // 1+1=2, 1+2=3, 2+1=3, 1+3=4, 3+1=4, 2+2=4
               if (current.width === 1 || next.width === 1) {
                 // Any combo with 2x1 should merge if result <= 4
@@ -1338,7 +1339,114 @@ function BrickTextBuilder() {
       seamsBelow = newSeams;
       bricks.push(...rowBricks);
     }
-    
+
+    // ============================================
+    // STRUCTURAL STABILITY POST-PROCESS
+    // Fix rows where all seams align with the row below
+    // e.g. |XX|XX|XX|XX| over |XX|XX|XX|XX| → |X|XX|XX|XX|X| over |XX|XX|XX|XX|
+    // ============================================
+    const byRow = {};
+    for (const b of bricks) {
+      if (!byRow[b.row]) byRow[b.row] = [];
+      byRow[b.row].push(b);
+    }
+    for (const r in byRow) {
+      byRow[r].sort((a, b) => a.col - b.col);
+    }
+
+    // Process bottom-up so fixes propagate correctly
+    for (let row = height - 2; row >= 0; row--) {
+      if (!byRow[row] || !byRow[row + 1]) continue;
+
+      // Find internal seams for the row below (boundaries between adjacent bricks)
+      const belowBricks = byRow[row + 1];
+      const belowSeams = new Set();
+      for (let i = 0; i < belowBricks.length - 1; i++) {
+        const curr = belowBricks[i];
+        const next = belowBricks[i + 1];
+        if (curr.col + curr.width === next.col) {
+          belowSeams.add(curr.col + curr.width);
+        }
+      }
+      if (belowSeams.size === 0) continue;
+
+      // Find continuous runs of bricks in the current row
+      const currentBricks = byRow[row];
+      const runs = [];
+      let runStartIdx = 0;
+      for (let i = 1; i <= currentBricks.length; i++) {
+        if (i === currentBricks.length ||
+            currentBricks[i].col !== currentBricks[i - 1].col + currentBricks[i - 1].width) {
+          runs.push(currentBricks.slice(runStartIdx, i));
+          runStartIdx = i;
+        }
+      }
+
+      for (const run of runs) {
+        if (run.length < 2) continue;
+
+        // Check if any internal seam in this run aligns with a seam below
+        let hasAligned = false;
+        for (let i = 0; i < run.length - 1; i++) {
+          if (belowSeams.has(run[i].col + run[i].width)) {
+            hasAligned = true;
+            break;
+          }
+        }
+        if (!hasAligned) continue;
+
+        // Re-tile this run with a 1-stud offset: [1, mW, mW, ..., remainder]
+        const runColStart = run[0].col;
+        const runColEnd = run[run.length - 1].col + run[run.length - 1].width;
+        const runWidth = runColEnd - runColStart;
+        const c = run[0].color;
+
+        const newWidths = [];
+        let rem = runWidth;
+        newWidths.push(1);
+        rem -= 1;
+        while (rem > 0) {
+          const w = Math.min(maxWidth, rem);
+          newWidths.push(w);
+          rem -= w;
+        }
+
+        // Verify the new layout actually fixes the alignment
+        let newSeamPos = runColStart;
+        let stillAligned = false;
+        for (let i = 0; i < newWidths.length - 1; i++) {
+          newSeamPos += newWidths[i];
+          if (belowSeams.has(newSeamPos)) {
+            stillAligned = true;
+            break;
+          }
+        }
+        if (stillAligned) continue;
+
+        // Remove old bricks from the main array
+        const oldSet = new Set(run);
+        for (let i = bricks.length - 1; i >= 0; i--) {
+          if (oldSet.has(bricks[i])) {
+            bricks.splice(i, 1);
+          }
+        }
+
+        // Add new bricks
+        let pos = runColStart;
+        const newRunBricks = [];
+        for (const w of newWidths) {
+          const newBrick = { row, col: pos, width: w, color: c };
+          bricks.push(newBrick);
+          newRunBricks.push(newBrick);
+          pos += w;
+        }
+
+        // Update byRow so subsequent row checks see the fixed layout
+        byRow[row] = byRow[row].filter(b => !oldSet.has(b)).concat(newRunBricks);
+        byRow[row].sort((a, b) => a.col - b.col);
+      }
+    }
+
     return bricks;
   }, []);
 
@@ -1403,7 +1511,8 @@ function BrickTextBuilder() {
           ? selectedColor
           : '#ff0000'; // placeholder for random, will be reassigned below
 
-      const charBricks = planBricks(pattern, color);
+      const maxWidth = brickSize === 'small' ? 2 : 4;
+      const charBricks = planBricks(pattern, color, maxWidth);
       const charStartX = startX + charIdx * (FONT_WIDTH + letterSpacing);
 
       charBricks.forEach(brick => {
@@ -1602,7 +1711,7 @@ function BrickTextBuilder() {
         setProgress(idx);
       }, 200 - speed * 1.5);
     }
-  }, [inputText, colorMode, selectedColor, speed, instantMode, createBrick, createBaseplate, createMinifigure, planBricks]);
+  }, [inputText, colorMode, selectedColor, brickSize, speed, instantMode, createBrick, createBaseplate, createMinifigure, planBricks]);
 
   // Initial build
   useEffect(() => {
@@ -1657,6 +1766,15 @@ function BrickTextBuilder() {
             <option value="rainbow">🌈 Rainbow</option>
             <option value="single">🎨 Single</option>
             <option value="random">🎲 Random</option>
+          </select>
+
+          <select
+            value={brickSize}
+            onChange={(e) => setBrickSize(e.target.value)}
+            className="px-3 py-2 rounded bg-gray-700 text-white border border-gray-600"
+          >
+            <option value="all">🧱 All Bricks</option>
+            <option value="small">🧱 Small Only (2×1, 2×2)</option>
           </select>
 
           {colorMode === 'single' && (
