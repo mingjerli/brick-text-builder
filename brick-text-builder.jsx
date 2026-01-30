@@ -644,6 +644,7 @@ const SEASONAL_COLORS = {
 const STUD_UNIT = 0.8;
 const BRICK_HEIGHT = 0.96;
 const PLATE_HEIGHT = 0.32;
+const PIECE_PLATE_HEIGHT = BRICK_HEIGHT / 3; // height of a single plate piece
 
 // ============================================
 // MAIN COMPONENT
@@ -668,12 +669,14 @@ function BrickTextBuilder() {
   const [colorMode, setColorMode] = useState('rainbow');
   const [selectedColor, setSelectedColor] = useState('#e53935');
   const [brickSize, setBrickSize] = useState('all');
+  const [pieceType, setPieceType] = useState('brick');
   const [speed, setSpeed] = useState(80);
   const [instantMode, setInstantMode] = useState(true);
   const [isBuilding, setIsBuilding] = useState(false);
   const [progress, setProgress] = useState(0);
   const [totalBricks, setTotalBricks] = useState(0);
   const [brickCounts, setBrickCounts] = useState({ 1: 0, 2: 0, 3: 0, 4: 0 });
+  const [plateCounts, setPlateCounts] = useState({ 1: 0, 2: 0, 3: 0, 4: 0 });
 
   // ============================================
   // THREE.JS SETUP
@@ -948,6 +951,42 @@ function BrickTextBuilder() {
         const stud = createStud(THREE, mat);
         stud.position.x = (x - (widthStuds - 1) / 2) * STUD_UNIT;
         stud.position.y = BRICK_HEIGHT / 2;
+        stud.position.z = (z - (depthStuds - 1) / 2) * STUD_UNIT;
+        group.add(stud);
+      }
+    }
+
+    return group;
+  }, [createStud]);
+
+  // ============================================
+  // CREATE PLATE PIECE (1/3 height of a brick)
+  // ============================================
+  const createPlate = useCallback((THREE, widthStuds, color) => {
+    const group = new THREE.Group();
+    const depthStuds = 2;
+
+    const mat = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.4,
+      metalness: 0.1
+    });
+
+    // Body
+    const bodyW = widthStuds * STUD_UNIT - 0.04;
+    const bodyD = depthStuds * STUD_UNIT - 0.04;
+    const bodyGeo = new THREE.BoxGeometry(bodyW, PIECE_PLATE_HEIGHT - 0.02, bodyD);
+    const body = new THREE.Mesh(bodyGeo, mat);
+    body.castShadow = true;
+    body.receiveShadow = true;
+    group.add(body);
+
+    // Studs
+    for (let x = 0; x < widthStuds; x++) {
+      for (let z = 0; z < depthStuds; z++) {
+        const stud = createStud(THREE, mat);
+        stud.position.x = (x - (widthStuds - 1) / 2) * STUD_UNIT;
+        stud.position.y = PIECE_PLATE_HEIGHT / 2;
         stud.position.z = (z - (depthStuds - 1) / 2) * STUD_UNIT;
         group.add(stud);
       }
@@ -1699,14 +1738,54 @@ function BrickTextBuilder() {
       }
     }
 
-    setTotalBricks(orderedBricks.length);
+    // Expand bricks into plates if needed
+    let finalBricks = orderedBricks;
+    if (pieceType === 'plate' || pieceType === 'mixture') {
+      const expanded = [];
+      for (const brick of orderedBricks) {
+        const usePlates = pieceType === 'plate' || (pieceType === 'mixture' && Math.random() < 0.5);
+        if (usePlates) {
+          // Replace one brick with 3 stacked plates
+          // In random/seasonal modes, give each plate a different color
+          const useRandomPlateColors = colorMode === 'random' || SEASONAL_COLORS[colorMode];
+          let prevColor = brick.color;
+          for (let p = 0; p < 3; p++) {
+            let plateColor = brick.color;
+            if (useRandomPlateColors) {
+              const available = palette.filter(c => c !== prevColor);
+              plateColor = available[Math.floor(Math.random() * available.length)];
+              prevColor = plateColor;
+            }
+            expanded.push({
+              ...brick,
+              type: 'plate',
+              color: plateColor,
+              worldY: brick.worldY + (p - 1) * PIECE_PLATE_HEIGHT,
+            });
+          }
+        } else {
+          expanded.push({ ...brick, type: 'brick' });
+        }
+      }
+      finalBricks = expanded;
+    } else {
+      finalBricks = orderedBricks.map(b => ({ ...b, type: 'brick' }));
+    }
 
-    // Count bricks by type
+    setTotalBricks(finalBricks.length);
+
+    // Count pieces by type and width
     const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    orderedBricks.forEach(brick => {
-      counts[brick.width] = (counts[brick.width] || 0) + 1;
+    const plateCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    finalBricks.forEach(brick => {
+      if (brick.type === 'plate') {
+        plateCounts[brick.width] = (plateCounts[brick.width] || 0) + 1;
+      } else {
+        counts[brick.width] = (counts[brick.width] || 0) + 1;
+      }
     });
     setBrickCounts(counts);
+    setPlateCounts(plateCounts);
 
     // Function to start minifigure walking (only if minifigure exists)
     const startMinifigWalk = () => {
@@ -1718,14 +1797,16 @@ function BrickTextBuilder() {
 
     if (instantMode) {
       // Place all instantly
-      orderedBricks.forEach(bd => {
-        const brick = createBrick(THREE, bd.width, bd.color);
-        brick.position.set(bd.worldX, bd.worldY, 0);
-        brick.userData = { targetY: bd.worldY, isDropping: false, bounce: 0 };
-        scene.add(brick);
-        bricksRef.current.push(brick);
+      finalBricks.forEach(bd => {
+        const piece = bd.type === 'plate'
+          ? createPlate(THREE, bd.width, bd.color)
+          : createBrick(THREE, bd.width, bd.color);
+        piece.position.set(bd.worldX, bd.worldY, 0);
+        piece.userData = { targetY: bd.worldY, isDropping: false, bounce: 0 };
+        scene.add(piece);
+        bricksRef.current.push(piece);
       });
-      setProgress(orderedBricks.length);
+      setProgress(finalBricks.length);
       // Start minifigure walking immediately
       setTimeout(startMinifigWalk, 300);
     } else {
@@ -1733,7 +1814,7 @@ function BrickTextBuilder() {
       setIsBuilding(true);
       let idx = 0;
       buildIntervalRef.current = setInterval(() => {
-        if (idx >= orderedBricks.length) {
+        if (idx >= finalBricks.length) {
           clearInterval(buildIntervalRef.current);
           setIsBuilding(false);
           // Start minifigure walking after build completes
@@ -1741,18 +1822,20 @@ function BrickTextBuilder() {
           return;
         }
 
-        const bd = orderedBricks[idx];
-        const brick = createBrick(THREE, bd.width, bd.color);
-        brick.position.set(bd.worldX, 30, 0);
-        brick.userData = { targetY: bd.worldY, isDropping: true, velocity: 0, bounce: 0 };
-        scene.add(brick);
-        bricksRef.current.push(brick);
+        const bd = finalBricks[idx];
+        const piece = bd.type === 'plate'
+          ? createPlate(THREE, bd.width, bd.color)
+          : createBrick(THREE, bd.width, bd.color);
+        piece.position.set(bd.worldX, 30, 0);
+        piece.userData = { targetY: bd.worldY, isDropping: true, velocity: 0, bounce: 0 };
+        scene.add(piece);
+        bricksRef.current.push(piece);
 
         idx++;
         setProgress(idx);
       }, 200 - speed * 1.5);
     }
-  }, [inputText, colorMode, selectedColor, brickSize, speed, instantMode, createBrick, createBaseplate, createMinifigure, planBricks]);
+  }, [inputText, colorMode, selectedColor, brickSize, pieceType, speed, instantMode, createBrick, createPlate, createBaseplate, createMinifigure, planBricks]);
 
   // Initial build
   useEffect(() => {
@@ -1820,6 +1903,16 @@ function BrickTextBuilder() {
           >
             <option value="all">🧱 All Bricks</option>
             <option value="small">🧱 Small Only (2×1, 2×2)</option>
+          </select>
+
+          <select
+            value={pieceType}
+            onChange={(e) => setPieceType(e.target.value)}
+            className="px-3 py-2 rounded bg-gray-700 text-white border border-gray-600"
+          >
+            <option value="brick">🧱 Bricks Only</option>
+            <option value="plate">📏 Plates Only</option>
+            <option value="mixture">🔀 Mixture</option>
           </select>
 
           {colorMode === 'single' && (
@@ -1891,23 +1984,29 @@ function BrickTextBuilder() {
           </span>
         </div>
 
-        {/* Brick inventory */}
+        {/* Parts inventory */}
         <div className="flex flex-wrap gap-3 items-center mt-3 p-3 bg-gray-700 rounded">
           <span className="text-white font-semibold">Parts List:</span>
-          <span className="text-gray-300 text-sm">
-            2×4: <span className="text-yellow-400 font-mono">{brickCounts[4]}</span>
-          </span>
-          <span className="text-gray-300 text-sm">
-            2×3: <span className="text-yellow-400 font-mono">{brickCounts[3]}</span>
-          </span>
-          <span className="text-gray-300 text-sm">
-            2×2: <span className="text-yellow-400 font-mono">{brickCounts[2]}</span>
-          </span>
-          <span className="text-gray-300 text-sm">
-            2×1: <span className="text-yellow-400 font-mono">{brickCounts[1]}</span>
-          </span>
+          {(brickCounts[4] > 0 || brickCounts[3] > 0 || brickCounts[2] > 0 || brickCounts[1] > 0) && (
+            <>
+              <span className="text-gray-400 text-xs">Bricks:</span>
+              {brickCounts[4] > 0 && <span className="text-gray-300 text-sm">2×4: <span className="text-yellow-400 font-mono">{brickCounts[4]}</span></span>}
+              {brickCounts[3] > 0 && <span className="text-gray-300 text-sm">2×3: <span className="text-yellow-400 font-mono">{brickCounts[3]}</span></span>}
+              {brickCounts[2] > 0 && <span className="text-gray-300 text-sm">2×2: <span className="text-yellow-400 font-mono">{brickCounts[2]}</span></span>}
+              {brickCounts[1] > 0 && <span className="text-gray-300 text-sm">2×1: <span className="text-yellow-400 font-mono">{brickCounts[1]}</span></span>}
+            </>
+          )}
+          {(plateCounts[4] > 0 || plateCounts[3] > 0 || plateCounts[2] > 0 || plateCounts[1] > 0) && (
+            <>
+              <span className="text-gray-400 text-xs ml-2">Plates:</span>
+              {plateCounts[4] > 0 && <span className="text-gray-300 text-sm">2×4: <span className="text-cyan-400 font-mono">{plateCounts[4]}</span></span>}
+              {plateCounts[3] > 0 && <span className="text-gray-300 text-sm">2×3: <span className="text-cyan-400 font-mono">{plateCounts[3]}</span></span>}
+              {plateCounts[2] > 0 && <span className="text-gray-300 text-sm">2×2: <span className="text-cyan-400 font-mono">{plateCounts[2]}</span></span>}
+              {plateCounts[1] > 0 && <span className="text-gray-300 text-sm">2×1: <span className="text-cyan-400 font-mono">{plateCounts[1]}</span></span>}
+            </>
+          )}
           <span className="text-white font-semibold ml-4">
-            Total: <span className="text-yellow-400">{totalBricks}</span> bricks
+            Total: <span className="text-yellow-400">{totalBricks}</span> pieces
           </span>
           <span className="text-gray-600 text-xs ml-4">
             Fan project • Not affiliated with any brick manufacturer
