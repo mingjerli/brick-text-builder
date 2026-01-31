@@ -598,6 +598,16 @@ const COLORS = [
   '#ffffff', // white
 ];
 
+const RAINBOW_COLORS = [
+  '#ff0000', // red
+  '#ff7800', // orange
+  '#ffd700', // yellow
+  '#00852b', // green
+  '#00bcd4', // cyan
+  '#0057a8', // blue
+  '#a5499b', // violet
+];
+
 const SEASONAL_COLORS = {
   spring: [
     '#ff69b4', // pink (cherry blossom)
@@ -1654,7 +1664,7 @@ function BrickTextBuilder() {
       }
 
       const color = colorMode === 'rainbow'
-        ? COLORS[charIdx % COLORS.length]
+        ? RAINBOW_COLORS[charIdx % RAINBOW_COLORS.length]
         : colorMode === 'single'
           ? selectedColor
           : '#ff0000'; // placeholder for random/seasonal, will be reassigned below
