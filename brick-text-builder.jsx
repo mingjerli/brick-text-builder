@@ -596,7 +596,6 @@ const COLORS = [
   '#a5499b', // bright purple / magenta
   '#00bcd4', // bright cyan / medium azure
   '#ffffff', // white
-  '#1b1b1b', // black
 ];
 
 const SEASONAL_COLORS = {
@@ -670,6 +669,7 @@ function BrickTextBuilder() {
   const [selectedColor, setSelectedColor] = useState('#e53935');
   const [brickSize, setBrickSize] = useState('all');
   const [pieceType, setPieceType] = useState('brick');
+  const [chaoticMode, setChaoticMode] = useState(false);
   const [speed, setSpeed] = useState(80);
   const [instantMode, setInstantMode] = useState(true);
   const [isBuilding, setIsBuilding] = useState(false);
@@ -926,9 +926,8 @@ function BrickTextBuilder() {
   // ============================================
   // CREATE BRICK (2xN where N = 1,2,3,4)
   // ============================================
-  const createBrick = useCallback((THREE, widthStuds, color) => {
+  const createBrick = useCallback((THREE, widthStuds, color, depthStuds = 2) => {
     const group = new THREE.Group();
-    const depthStuds = 2;
 
     const mat = new THREE.MeshStandardMaterial({
       color,
@@ -962,9 +961,8 @@ function BrickTextBuilder() {
   // ============================================
   // CREATE PLATE PIECE (1/3 height of a brick)
   // ============================================
-  const createPlate = useCallback((THREE, widthStuds, color) => {
+  const createPlate = useCallback((THREE, widthStuds, color, depthStuds = 2) => {
     const group = new THREE.Group();
-    const depthStuds = 2;
 
     const mat = new THREE.MeshStandardMaterial({
       color,
@@ -1531,6 +1529,61 @@ function BrickTextBuilder() {
   }, []);
 
   // ============================================
+  // CHAOTIC MODE POST-PROCESSING
+  // ============================================
+  const applyChaoticMode = (bricks) => {
+    // Group bricks by (col, width) key
+    const groups = new Map();
+    bricks.forEach((brick, idx) => {
+      const key = `${brick.col},${brick.width}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ brick, idx });
+    });
+
+    // Find interior bricks in runs of 3+ consecutive rows (skip top & bottom)
+    const chaoticIndices = new Set();
+    for (const entries of groups.values()) {
+      entries.sort((a, b) => a.brick.row - b.brick.row);
+      let runStart = 0;
+      for (let i = 1; i <= entries.length; i++) {
+        if (i < entries.length && entries[i].brick.row === entries[i - 1].brick.row + 1) {
+          continue;
+        }
+        const runLen = i - runStart;
+        if (runLen >= 3) {
+          // Skip first (runStart) and last (i-1) — only break interior bricks
+          for (let j = runStart + 1; j < i - 1; j++) {
+            chaoticIndices.add(entries[j].idx);
+          }
+        }
+        runStart = i;
+      }
+    }
+
+    // Replace chaotic bricks with 1x1 pieces filling the same 2×W footprint
+    // Each brick (2 deep × W wide) becomes W×2 individual 1×1 pieces
+    const result = [];
+    bricks.forEach((brick, idx) => {
+      if (chaoticIndices.has(idx)) {
+        for (let c = 0; c < brick.width; c++) {
+          for (let d = 0; d < 2; d++) {
+            result.push({
+              ...brick,
+              col: brick.col + c,
+              width: 1,
+              depth: 1,
+              zOffset: (d - 0.5) * STUD_UNIT  // -0.4 or +0.4
+            });
+          }
+        }
+      } else {
+        result.push(brick);
+      }
+    });
+    return result;
+  };
+
+  // ============================================
   // BUILD WORD
   // ============================================
   const buildWord = useCallback(() => {
@@ -1607,7 +1660,9 @@ function BrickTextBuilder() {
           : '#ff0000'; // placeholder for random/seasonal, will be reassigned below
 
       const maxWidth = brickSize === 'small' ? 2 : 4;
-      const charBricks = planBricks(pattern, color, maxWidth);
+      const charBricks = chaoticMode
+        ? applyChaoticMode(planBricks(pattern, color, maxWidth))
+        : planBricks(pattern, color, maxWidth);
       const charStartX = startX + charIdx * (FONT_WIDTH + letterSpacing);
 
       charBricks.forEach(brick => {
@@ -1620,6 +1675,7 @@ function BrickTextBuilder() {
           charIdx,
           worldX,
           worldY,
+          worldZ: brick.zOffset || 0,
           // Store pixel range for overlap checking
           pixelStart: charStartX + brick.col,
           pixelEnd: charStartX + brick.col + brick.width - 1
@@ -1795,15 +1851,17 @@ function BrickTextBuilder() {
     // Count pieces by type, width, and color
     const partsMap = {};
     finalBricks.forEach(brick => {
-      const key = `${brick.type || 'brick'}-${brick.width}-${brick.color}`;
+      const depth = brick.depth || 2;
+      const key = `${brick.type || 'brick'}-${depth}x${brick.width}-${brick.color}`;
       if (!partsMap[key]) {
-        partsMap[key] = { type: brick.type || 'brick', width: brick.width, color: brick.color, count: 0 };
+        partsMap[key] = { type: brick.type || 'brick', width: brick.width, depth, color: brick.color, count: 0 };
       }
       partsMap[key].count++;
     });
     // Sort: bricks before plates, then by width descending, then by color
     const parts = Object.values(partsMap).sort((a, b) => {
       if (a.type !== b.type) return a.type === 'brick' ? -1 : 1;
+      if (a.depth !== b.depth) return (b.depth || 2) - (a.depth || 2);
       if (a.width !== b.width) return b.width - a.width;
       return a.color.localeCompare(b.color);
     });
@@ -1820,10 +1878,11 @@ function BrickTextBuilder() {
     if (instantMode) {
       // Place all instantly
       finalBricks.forEach(bd => {
+        const depth = bd.depth || 2;
         const piece = bd.type === 'plate'
-          ? createPlate(THREE, bd.width, bd.color)
-          : createBrick(THREE, bd.width, bd.color);
-        piece.position.set(bd.worldX, bd.worldY, 0);
+          ? createPlate(THREE, bd.width, bd.color, depth)
+          : createBrick(THREE, bd.width, bd.color, depth);
+        piece.position.set(bd.worldX, bd.worldY, bd.worldZ || 0);
         piece.userData = { targetY: bd.worldY, isDropping: false, bounce: 0 };
         scene.add(piece);
         bricksRef.current.push(piece);
@@ -1845,10 +1904,11 @@ function BrickTextBuilder() {
         }
 
         const bd = finalBricks[idx];
+        const depth = bd.depth || 2;
         const piece = bd.type === 'plate'
-          ? createPlate(THREE, bd.width, bd.color)
-          : createBrick(THREE, bd.width, bd.color);
-        piece.position.set(bd.worldX, 30, 0);
+          ? createPlate(THREE, bd.width, bd.color, depth)
+          : createBrick(THREE, bd.width, bd.color, depth);
+        piece.position.set(bd.worldX, 30, bd.worldZ || 0);
         piece.userData = { targetY: bd.worldY, isDropping: true, velocity: 0, bounce: 0 };
         scene.add(piece);
         bricksRef.current.push(piece);
@@ -1857,7 +1917,7 @@ function BrickTextBuilder() {
         setProgress(idx);
       }, 200 - speed * 1.5);
     }
-  }, [inputText, colorMode, selectedColor, brickSize, pieceType, speed, instantMode, createBrick, createPlate, createBaseplate, createMinifigure, planBricks]);
+  }, [inputText, colorMode, selectedColor, brickSize, pieceType, chaoticMode, speed, instantMode, createBrick, createPlate, createBaseplate, createMinifigure, planBricks]);
 
   // Initial build
   useEffect(() => {
@@ -1904,38 +1964,68 @@ function BrickTextBuilder() {
             Instant
           </label>
 
-          <select
-            value={colorMode}
-            onChange={(e) => setColorMode(e.target.value)}
-            className="px-3 py-2 rounded bg-gray-700 text-white border border-gray-600"
-          >
-            <option value="rainbow">🌈 Rainbow</option>
-            <option value="single">🎨 Single</option>
-            <option value="random">🎲 Random</option>
-            <option value="spring">🌸 Spring</option>
-            <option value="summer">☀️ Summer</option>
-            <option value="fall">🍂 Fall</option>
-            <option value="winter">❄️ Winter</option>
-          </select>
+          <div className="relative group">
+            <select
+              value={colorMode}
+              onChange={(e) => setColorMode(e.target.value)}
+              className="px-3 py-2 rounded bg-gray-700 text-white border border-gray-600"
+            >
+              <option value="rainbow">🌈 Rainbow</option>
+              <option value="single">🎨 Single</option>
+              <option value="random">🎲 Random</option>
+              <option value="spring">🌸 Spring</option>
+              <option value="summer">☀️ Summer</option>
+              <option value="fall">🍂 Fall</option>
+              <option value="winter">❄️ Winter</option>
+            </select>
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-950 text-gray-200 text-xs rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+              Rainbow: one color per letter · Single: fixed color · Random/Seasonal: unique colors per brick
+            </div>
+          </div>
 
-          <select
-            value={brickSize}
-            onChange={(e) => setBrickSize(e.target.value)}
-            className="px-3 py-2 rounded bg-gray-700 text-white border border-gray-600"
-          >
-            <option value="all">🧱 All Bricks</option>
-            <option value="small">🧱 Small Only (2×1, 2×2)</option>
-          </select>
+          <div className="relative group">
+            <select
+              value={brickSize}
+              onChange={(e) => setBrickSize(e.target.value)}
+              className="px-3 py-2 rounded bg-gray-700 text-white border border-gray-600"
+            >
+              <option value="all">🧱 All Bricks</option>
+              <option value="small">🧱 Small Only (2×1, 2×2)</option>
+            </select>
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-950 text-gray-200 text-xs rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+              All: bricks up to 2×4 · Small: only 2×1 and 2×2 for a detailed look
+            </div>
+          </div>
 
-          <select
-            value={pieceType}
-            onChange={(e) => setPieceType(e.target.value)}
-            className="px-3 py-2 rounded bg-gray-700 text-white border border-gray-600"
-          >
-            <option value="brick">🧱 Bricks Only</option>
-            <option value="plate">📏 Plates Only</option>
-            <option value="mixture">🔀 Mixture</option>
-          </select>
+          <div className="relative group">
+            <select
+              value={pieceType}
+              onChange={(e) => setPieceType(e.target.value)}
+              className="px-3 py-2 rounded bg-gray-700 text-white border border-gray-600"
+            >
+              <option value="brick">🧱 Bricks Only</option>
+              <option value="plate">📏 Plates Only</option>
+              <option value="mixture">🔀 Mixture</option>
+            </select>
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-950 text-gray-200 text-xs rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+              Brick: standard height · Plate: 1/3 height for finer detail · Mixture: random mix of both
+            </div>
+          </div>
+
+          <div className="relative group">
+            <label className="flex items-center gap-2 px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={chaoticMode}
+                onChange={(e) => setChaoticMode(e.target.checked)}
+                className="accent-yellow-400"
+              />
+              Chaotic
+            </label>
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-950 text-gray-200 text-xs rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+              Breaks repetitive vertical columns into 1×1 pieces (top/bottom rows kept intact)
+            </div>
+          </div>
 
           {colorMode === 'single' && (
             <div className="flex gap-1">
@@ -2022,9 +2112,10 @@ function BrickTextBuilder() {
               // Group parts by shape (type + width)
               const shapeMap = {};
               partsList.forEach(part => {
-                const shapeKey = `${part.type}-${part.width}`;
+                const depth = part.depth || 2;
+                const shapeKey = `${part.type}-${depth}x${part.width}`;
                 if (!shapeMap[shapeKey]) {
-                  shapeMap[shapeKey] = { type: part.type, width: part.width, total: 0, colors: [] };
+                  shapeMap[shapeKey] = { type: part.type, width: part.width, depth, total: 0, colors: [] };
                 }
                 shapeMap[shapeKey].total += part.count;
                 shapeMap[shapeKey].colors.push({ color: part.color, count: part.count });
@@ -2049,7 +2140,7 @@ function BrickTextBuilder() {
                     >
                       <span className="text-gray-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
                       <span className="text-gray-300 text-xs">
-                        {shape.type === 'plate' ? 'P' : 'B'} 2×{shape.width}
+                        {shape.type === 'plate' ? 'P' : 'B'} {shape.depth || 2}×{shape.width}
                       </span>
                       <span className="text-yellow-400 font-mono text-xs">×{shape.total}</span>
                     </div>
